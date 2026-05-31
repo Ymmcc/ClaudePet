@@ -12,12 +12,21 @@ class BehaviorController(QObject):
         self._timer.timeout.connect(self._tick)
         self._timer.start(self._interval)
         self._last_action = None
+        self._paused = False
 
     def set_interval(self, seconds: int):
         self._interval = seconds * 1000
         self._timer.setInterval(self._interval)
 
+    def pause(self):
+        self._paused = True
+
+    def resume(self):
+        self._paused = False
+
     def _tick(self):
+        if self._paused:
+            return
         # 每隔18秒随机向左或向右跑
         actions = [
             ("walk", 0.5),       # 向右跑 - 50%

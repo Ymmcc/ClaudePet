@@ -2,6 +2,7 @@ from PyQt6.QtCore import Qt, QPoint, QRect
 from PyQt6.QtGui import QImage, QPainter, QColor, QPixmap, QFont, QFontMetrics, QPolygon
 from enum import Enum
 import os
+import sys
 
 
 class SpriteState(Enum):
@@ -18,8 +19,16 @@ class SpriteState(Enum):
     DRAG = "drag"
 
 
+def _get_assets_path():
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.dirname(__file__))
+    return os.path.join(base_path, "assets", "clawd", "spritesheet.webp")
+
+
 # Clawd 精灵图配置 (8列 x 9行)
-CLAWD_SPRITESHEET_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "clawd", "spritesheet.webp")
+CLAWD_SPRITESHEET_PATH = _get_assets_path()
 
 # 精灵图布局: 8列 x 9行
 SPRITE_COLUMNS = 8

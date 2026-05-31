@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QMenu, QApplication
-from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QPainter, QPixmap, QCursor
 from core.animation import AnimationController
 from core.emotion import EmotionSystem
@@ -7,6 +7,68 @@ from core.behaviors import BehaviorController
 from core.sprite_engine import render_speech_bubble
 from core.todo_manager import TodoManager
 from ui.reminder_popup import ReminderPopup
+
+
+class FocusTimer(QObject):
+    tick = pyqtSignal(int, str)
+    finished = pyqtSignal(str)
+
+    FOCUS_DURATION = 1500
+    BREAK_DURATION = 300
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._on_tick)
+        self._remaining = 0
+        self._state = "idle"
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def remaining(self):
+        return self._remaining
+
+    def start_focus(self):
+        self._state = "focus"
+        self._remaining = self.FOCUS_DURATION
+        self._timer.start(1000)
+        self.tick.emit(self._remaining, self._state)
+
+    def start_break(self):
+        self._state = "break"
+        self._remaining = self.BREAK_DURATION
+        self._timer.start(1000)
+        self.tick.emit(self._remaining, self._state)
+
+    def pause(self):
+        self._timer.stop()
+
+    def resume(self):
+        if self._state != "idle":
+            self._timer.start(1000)
+
+    def stop(self):
+        self._timer.stop()
+        self._state = "idle"
+        self._remaining = 0
+
+    def _on_tick(self):
+        self._remaining -= 1
+        if self._remaining <= 0:
+            self._timer.stop()
+            finished_state = self._state
+            self.finished.emit(finished_state)
+        else:
+            self.tick.emit(self._remaining, self._state)
+
+    @staticmethod
+    def format_time(seconds):
+        m = seconds // 60
+        s = seconds % 60
+        return f"{m}:{s:02d}"
 
 
 class PetWindow(QWidget):
@@ -30,6 +92,9 @@ class PetWindow(QWidget):
         self._walk_timer.timeout.connect(self._walk_step)
         self._hidden = False
         self._reminder_popup = None
+        self._focus_timer = FocusTimer(self)
+        self._focus_timer.tick.connect(self._on_focus_tick)
+        self._focus_timer.finished.connect(self._on_focus_finished)
 
         self._init_window()
         self._init_animation()
@@ -247,6 +312,24 @@ class PetWindow(QWidget):
 
         menu.addSeparator()
 
+        if self._focus_timer.state == "idle":
+            focus_action = menu.addAction("🍅 开始专注")
+            focus_action.triggered.connect(self._start_focus)
+        elif self._focus_timer.state == "focus" or self._focus_timer._state == "focus_paused":
+            if self._focus_timer._state == "focus_paused":
+                pause_action = menu.addAction("▶ 恢复")
+            else:
+                remaining = FocusTimer.format_time(self._focus_timer.remaining)
+                pause_action = menu.addAction(f"⏸ 暂停 ({remaining})")
+            pause_action.triggered.connect(self._toggle_focus_pause)
+            stop_action = menu.addAction("✋ 放弃本次")
+            stop_action.triggered.connect(self._stop_focus)
+        elif self._focus_timer.state == "break":
+            skip_action = menu.addAction("⏭ 跳过休息")
+            skip_action.triggered.connect(self._stop_focus)
+
+        menu.addSeparator()
+
         feed_action = menu.addAction("喂食")
         feed_action.triggered.connect(self._feed)
 
@@ -295,6 +378,47 @@ class PetWindow(QWidget):
         self.show_bubble("休息一下~", 2000)
         self._anim.set_state("fail")
         QTimer.singleShot(5000, lambda: self._anim.set_state("idle"))
+
+    def _start_focus(self):
+        self._focus_timer.start_focus()
+        self._anim.set_state("coding")
+        self._behaviors.pause()
+
+    def _stop_focus(self):
+        self._focus_timer.stop()
+        self._anim.set_state("idle")
+        self._behaviors.resume()
+        self._hide_bubble()
+
+    def _toggle_focus_pause(self):
+        if self._focus_timer.state == "focus":
+            self._focus_timer.pause()
+            self._focus_timer._state = "focus_paused"
+            self.show_bubble("⏸ 已暂停", 2000)
+        elif self._focus_timer._state == "focus_paused":
+            self._focus_timer._state = "focus"
+            self._focus_timer.resume()
+
+    def _on_focus_tick(self, remaining, state):
+        time_str = FocusTimer.format_time(remaining)
+        if state == "focus":
+            self.show_bubble(f"🍅 {time_str}", 2000)
+        elif state == "break":
+            self.show_bubble(f"☕ {time_str}", 2000)
+
+    def _on_focus_finished(self, state):
+        if state == "focus":
+            self.show_bubble("✅ 专注完成！", 3000)
+            self._anim.set_state("idle")
+            QTimer.singleShot(3000, self._start_break_timer)
+        elif state == "break":
+            self.show_bubble("💪 开始下一轮！", 3000)
+            self._anim.set_state("idle")
+            self._behaviors.resume()
+
+    def _start_break_timer(self):
+        self._focus_timer.start_break()
+        self._anim.set_state("sit")
 
     def _hide_pet(self):
         """隐藏桌宠 - 显示挥手动画后隐藏"""
